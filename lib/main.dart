@@ -3,6 +3,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'dart:convert';
 
 enum Category { bar, restaurant, cafe }
 
@@ -57,57 +58,126 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   void _showMarkerDialog(TapPosition tapPosition, LatLng latLng) {
-    TextEditingController titleController = TextEditingController();
+    TextEditingController nameController = TextEditingController();
     TextEditingController descriptionController = TextEditingController();
+    TextEditingController tagsController = TextEditingController();
     Category? selectedCategory;
-
+    double initialRating = 0.0;
+    
     showDialog(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) {
           return AlertDialog(
-            title: Text("Add Marker"),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(controller: titleController, decoration: InputDecoration(labelText: "Title")),
-                TextField(controller: descriptionController, decoration: InputDecoration(labelText: "Description")),
-                DropdownButton<Category>(
-                  hint: Text("Select Category"),
-                  value: selectedCategory,
-                  onChanged: (Category? newValue) {
-                    setDialogState(() {
-                      selectedCategory = newValue;
-                    });
-                  },
-                  items: Category.values.map((Category category) {
-                    return DropdownMenuItem<Category>(
-                      value: category,
-                      child: Row(
-                        children: [
-                          Icon(_getCategoryIcon(category), color: _getCategoryColor(category)),
-                          SizedBox(width: 8),
-                          Text(category.toString().split('.').last),
-                        ],
-                      ),
-                    );
-                  }).toList(),
-                ),
-              ],
+            title: Text("Add Place"),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  TextField(
+                    controller: nameController, 
+                    decoration: InputDecoration(labelText: "Name")
+                  ),
+                  TextField(
+                    controller: descriptionController, 
+                    decoration: InputDecoration(labelText: "Description"),
+                    maxLines: 3,
+                  ),
+                  SizedBox(height: 10),
+                  Text("Category:"),
+                  DropdownButton<Category>(
+                    isExpanded: true,
+                    hint: Text("Select Category"),
+                    value: selectedCategory,
+                    onChanged: (Category? newValue) {
+                      setDialogState(() {
+                        selectedCategory = newValue;
+                      });
+                    },
+                    items: Category.values.map((Category category) {
+                      return DropdownMenuItem<Category>(
+                        value: category,
+                        child: Row(
+                          children: [
+                            Icon(_getCategoryIcon(category), color: _getCategoryColor(category)),
+                            SizedBox(width: 8),
+                            Text(category.toString().split('.').last),
+                          ],
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                  SizedBox(height: 10),
+                  Text("Initial Rating:"),
+                  Slider(
+                    value: initialRating,
+                    min: 0,
+                    max: 5,
+                    divisions: 10,
+                    label: initialRating.toStringAsFixed(1),
+                    onChanged: (double value) {
+                      setDialogState(() {
+                        initialRating = value;
+                      });
+                    },
+                  ),
+                  SizedBox(height: 10),
+                  TextField(
+                    controller: tagsController, 
+                    decoration: InputDecoration(
+                      labelText: "Tags (comma separated)",
+                      hintText: "e.g. Italian, Outdoor, Family-friendly"
+                    ),
+                  ),
+                  SizedBox(height: 5),
+                  Text(
+                    "Location: ${latLng.latitude.toStringAsFixed(6)}, ${latLng.longitude.toStringAsFixed(6)}",
+                    style: TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                ],
+              ),
             ),
             actions: [
               TextButton(onPressed: () => Navigator.pop(context), child: Text("Cancel")),
               TextButton(
                 onPressed: () {
                   if (selectedCategory != null) {
+                    // Parse tags from comma-separated string
+                    List<String> tags = tagsController.text
+                        .split(',')
+                        .map((tag) => tag.trim())
+                        .where((tag) => tag.isNotEmpty)
+                        .toList();
+                    
+                    Map<String, dynamic> placeData = {
+                      'name': nameController.text,
+                      'description': descriptionController.text,
+                      'category': selectedCategory.toString().split('.').last,
+                      'location': {
+                        'latitude': latLng.latitude,
+                        'longitude': latLng.longitude
+                      },
+                      'rating': initialRating,
+                      'reviewsCount': 0,
+                      'tags': tags
+                    };
+                    
                     setState(() {
                       _markers.add({
                         'point': latLng,
-                        'title': titleController.text,
+                        'title': nameController.text,
                         'description': descriptionController.text,
                         'category': selectedCategory,
+                        'rating': initialRating,
+                        'reviewsCount': 0,
+                        'tags': tags,
                       });
                     });
+                    
+                    // Output JSON to console
+                    print(JsonEncoder.withIndent('  ').convert(placeData));
+                    
                     Navigator.pop(context);
                   }
                 },
@@ -120,12 +190,37 @@ class _MapScreenState extends State<MapScreen> {
     );
   }
 
-  void _showMarkerDetails(String title, String description) {
+  void _showMarkerDetails(Map<String, dynamic> markerData) {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text(title),
-        content: Text(description),
+        title: Text(markerData['title']),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(markerData['description']),
+            SizedBox(height: 10),
+            Row(
+              children: [
+                Icon(Icons.star, color: Colors.amber),
+                SizedBox(width: 5),
+                Text('${markerData['rating'].toStringAsFixed(1)} (${markerData['reviewsCount']} reviews)'),
+              ],
+            ),
+            SizedBox(height: 10),
+            if ((markerData['tags'] as List).isNotEmpty) ...[
+              Text('Tags:', style: TextStyle(fontWeight: FontWeight.bold)),
+              Wrap(
+                spacing: 8,
+                children: (markerData['tags'] as List).map((tag) => Chip(
+                  label: Text(tag),
+                  backgroundColor: Colors.blue.shade100,
+                )).toList(),
+              ),
+            ],
+          ],
+        ),
         actions: [TextButton(onPressed: () => Navigator.pop(context), child: Text("Close"))],
       ),
     );
@@ -151,7 +246,7 @@ class _MapScreenState extends State<MapScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text("Flutter Map Example")),
+      appBar: AppBar(title: Text("Flutter Map Places")),
       body: Column(
         children: [
           Container(
@@ -221,26 +316,58 @@ class _MapScreenState extends State<MapScreen> {
                                           height: 120.0,
                                           point: marker['point'],
                                           child: GestureDetector(
-                                            onTap: () => _showMarkerDetails(marker['title'], marker['description']),
+                                            onTap: () => _showMarkerDetails(marker),
                                             child: MouseRegion(
                                               cursor: SystemMouseCursors.click,
                                               onEnter: (_) => setState(() {}),
                                               onExit: (_) => setState(() {}),
                                               child: Column(
                                                 children: [
-                                                  Text(
-                                                    marker['title'],
-                                                    style: TextStyle(
-                                                      color: Colors.black,
-                                                      fontSize: 14,
-                                                      fontWeight: FontWeight.bold,
-                                                      backgroundColor: Colors.white.withOpacity(0.7),
+                                                  Container(
+                                                    padding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                                                    decoration: BoxDecoration(
+                                                      color: Colors.white.withOpacity(0.8),
+                                                      borderRadius: BorderRadius.circular(4),
+                                                    ),
+                                                    child: Text(
+                                                      marker['title'],
+                                                      style: TextStyle(
+                                                        color: Colors.black,
+                                                        fontSize: 12,
+                                                        fontWeight: FontWeight.bold,
+                                                      ),
+                                                      overflow: TextOverflow.ellipsis,
+                                                      maxLines: 1,
                                                     ),
                                                   ),
-                                                  Icon(
-                                                    _getCategoryIcon(marker['category']),
-                                                    color: _getCategoryColor(marker['category']),
-                                                    size: 40,
+                                                  Stack(
+                                                    alignment: Alignment.center,
+                                                    children: [
+                                                      Icon(
+                                                        _getCategoryIcon(marker['category']),
+                                                        color: _getCategoryColor(marker['category']),
+                                                        size: 40,
+                                                      ),
+                                                      if ((marker['rating'] as double) > 0)
+                                                        Positioned(
+                                                          bottom: 0,
+                                                          child: Container(
+                                                            padding: EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                                                            decoration: BoxDecoration(
+                                                              color: Colors.amber,
+                                                              borderRadius: BorderRadius.circular(8),
+                                                            ),
+                                                            child: Text(
+                                                              (marker['rating'] as double).toStringAsFixed(1),
+                                                              style: TextStyle(
+                                                                fontSize: 10,
+                                                                fontWeight: FontWeight.bold,
+                                                                color: Colors.black,
+                                                              ),
+                                                            ),
+                                                          ),
+                                                        ),
+                                                    ],
                                                   ),
                                                 ],
                                               ),
